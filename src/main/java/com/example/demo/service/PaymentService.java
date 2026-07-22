@@ -99,16 +99,21 @@ public class PaymentService {
 
         // Distance = passenger's own pickup → drop, not the traveller's whole
         // route (a passenger only pays for the leg they actually ride).
-        // Auto-calculated via Google Distance Matrix; falls back to a
-        // manually supplied distanceKm only if Google can't resolve it.
+        //
+        // A manually supplied distanceKm (e.g. the traveller entering actual
+        // km driven when marking a ride complete) is the real, ground-truth
+        // figure and always wins. Only when no manual distance is supplied
+        // do we fall back to the auto-geocoded estimate (e.g. when the
+        // passenger initiates payment directly, before any traveller has
+        // entered a real number).
         double distanceKm;
-        try {
-            distanceKm = distanceService.getDistanceKm(
-                    passenger.getPickupLocation(), passenger.getDropLocation());
-        } catch (RuntimeException autoCalcFailed) {
-            if (req.getDistanceKm() > 0) {
-                distanceKm = req.getDistanceKm();
-            } else {
+        if (req.getDistanceKm() > 0) {
+            distanceKm = req.getDistanceKm();
+        } else {
+            try {
+                distanceKm = distanceService.getDistanceKm(
+                        passenger.getPickupLocation(), passenger.getDropLocation());
+            } catch (RuntimeException autoCalcFailed) {
                 throw new RuntimeException(
                         "Could not calculate distance automatically: " + autoCalcFailed.getMessage()
                         + ". Please enter distance manually.");

@@ -55,12 +55,16 @@ public class WhatsAppService {
                                    double distanceKm,
                                    String upiRef) {
 
+        long driverSharePct = totalAmount > 0
+                ? Math.round((travellerShare / totalAmount) * 100)
+                : 0;
+
         String text = "\u2705 *Payment Confirmed \u2014 RideShare*\n\n"  // ✅
                 + "Traveller: " + travellerName + "\n"
                 + "Route: " + route + "\n"
                 + "Distance: " + distanceKm + " km\n"
                 + "Total paid: \u20B9" + String.format("%.0f", totalAmount) + "\n"   // ₹
-                + "Driver share (50%): \u20B9" + String.format("%.0f", travellerShare) + "\n"
+                + "Driver share (" + driverSharePct + "%): \u20B9" + String.format("%.0f", travellerShare) + "\n"
                 + "Driver UPI: " + travellerUpi + "\n"
                 + "Transaction ref: " + upiRef + "\n\n"
                 + "Thank you for riding with us! \uD83D\uDE4F";  // 🙏

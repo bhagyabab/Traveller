@@ -45,10 +45,10 @@ public class Payment {
     private double totalAmount;
 
     @Column(name = "app_share", nullable = false)
-    private double appShare;          // 50% to rideshare@upi (you)
+    private double appShare;          // your cut — see app.split.app-share in application.properties
 
     @Column(name = "traveller_share", nullable = false)
-    private double travellerShare;    // 50% to traveller upiId
+    private double travellerShare;    // traveller's cut — see app.split.traveller-share in application.properties
 
     @Column(name = "upi_ref")
     private String upiRef;
