@@ -2,7 +2,6 @@ package com.example.demo.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -16,229 +15,461 @@ import java.time.Duration;
 @Service
 public class DistanceService {
 
-    private static final String NOMINATIM_URL =
-            "https://nominatim.openstreetmap.org/search";
+    // ============================================================
+    // PHOTON GEOCODING API
+    // Converts place names into Latitude / Longitude
+    // Uses OpenStreetMap data
+    // No API key required
+    // ============================================================
+    private static final String PHOTON_URL =
+            "https://photon.komoot.io/api/";
 
+    // ============================================================
+    // OSRM ROUTING API
+    // Calculates driving distance between coordinates
+    // ============================================================
     private static final String OSRM_BASE =
             "https://router.project-osrm.org/route/v1/driving/";
 
-    // Read User-Agent from application.properties
-    @Value("${app.geocoding.user-agent}")
-    private String userAgent;
+    // HTTP Client
+    private final HttpClient httpClient =
+            HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(15))
+                    .build();
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    // JSON Parser
+    private final ObjectMapper mapper =
+            new ObjectMapper();
 
-    private final ObjectMapper mapper = new ObjectMapper();
+
+    // ============================================================
+    // MAIN METHOD
+    // ============================================================
 
     /**
-     * Returns driving distance in km between two place names.
+     * Returns driving distance in kilometers between
+     * two place names.
+     *
+     * Example:
+     *
+     * origin      = Yelamanchili, Andhra Pradesh, India
+     * destination = Anakapalle, Andhra Pradesh, India
+     *
+     * Flow:
+     *
+     * Place Name
+     *      ↓
+     * Photon Geocoding
+     *      ↓
+     * Latitude + Longitude
+     *      ↓
+     * OSRM Routing
+     *      ↓
+     * Driving Distance in KM
      */
-    public double getDistanceKm(String origin, String destination) {
+    public double getDistanceKm(
+            String origin,
+            String destination) {
 
-        if (origin == null || origin.isBlank()
-                || destination == null || destination.isBlank()) {
+        // Validate input
+        if (origin == null
+                || origin.isBlank()
+                || destination == null
+                || destination.isBlank()) {
 
             throw new RuntimeException(
                     "Both pickup and drop locations are required to calculate distance"
             );
         }
 
-        double[] originCoords = geocode(origin);
-        double[] destCoords = geocode(destination);
+        // Get pickup coordinates
+        double[] originCoords =
+                geocode(origin);
 
+        // Get destination coordinates
+        double[] destinationCoords =
+                geocode(destination);
+
+        // Calculate driving distance
         return route(
                 originCoords,
-                destCoords,
+                destinationCoords,
                 origin,
                 destination
         );
     }
 
-    // ─────────────────────────────────────────────
-    // Step 1: Place name -> Latitude / Longitude
-    // ─────────────────────────────────────────────
+
+    // ============================================================
+    // STEP 1: GEOCODING USING PHOTON
+    // ============================================================
+
+    /**
+     * Converts place name into:
+     *
+     * [latitude, longitude]
+     *
+     * Photon GeoJSON coordinates are:
+     *
+     * [longitude, latitude]
+     */
     private double[] geocode(String place) {
 
-        String url = NOMINATIM_URL
-                + "?q=" + encode(place)
-                + "&format=json"
-                + "&limit=1";
+        // Build Photon URL
+        String url =
+                PHOTON_URL
+                        + "?q="
+                        + encode(place)
+                        + "&limit=1"
+                        + "&lang=en";
 
         try {
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("User-Agent", userAgent)
-                    .header("Accept", "application/json")
-                    .GET()
-                    .build();
+            System.out.println(
+                    "Photon request: " + url
+            );
 
+            // Create HTTP request
+            HttpRequest request =
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(url))
+                            .header(
+                                    "Accept",
+                                    "application/json"
+                            )
+                            .GET()
+                            .build();
+
+            // Send HTTP request
             HttpResponse<String> response =
                     httpClient.send(
                             request,
                             HttpResponse.BodyHandlers.ofString()
                     );
 
-            // Check HTTP status before parsing JSON
+            System.out.println(
+                    "Photon HTTP Status: "
+                            + response.statusCode()
+            );
+
+            // Check HTTP status
             if (response.statusCode() != 200) {
 
                 throw new RuntimeException(
-                        "Location service returned HTTP "
+                        "Photon location service returned HTTP "
                                 + response.statusCode()
                                 + ": "
                                 + response.body()
                 );
             }
 
-            String responseBody = response.body();
+            // Get response body
+            String responseBody =
+                    response.body();
 
-            if (responseBody == null || responseBody.isBlank()) {
+            // Check empty response
+            if (responseBody == null
+                    || responseBody.isBlank()) {
 
                 throw new RuntimeException(
-                        "Location service returned an empty response"
+                        "Photon returned an empty response for location: "
+                                + place
                 );
             }
 
-            JsonNode results;
+            // Parse JSON
+            JsonNode root;
 
             try {
 
-                results = mapper.readTree(responseBody);
+                root =
+                        mapper.readTree(responseBody);
 
             } catch (Exception e) {
 
-                String preview = responseBody.substring(
-                        0,
-                        Math.min(responseBody.length(), 200)
-                );
+                String preview =
+                        responseBody.substring(
+                                0,
+                                Math.min(
+                                        responseBody.length(),
+                                        500
+                                )
+                        );
 
                 throw new RuntimeException(
-                        "Location service returned an invalid response: "
+                        "Photon returned an invalid response for location '"
+                                + place
+                                + "'. Response: "
                                 + preview
                 );
             }
 
-            if (!results.isArray() || results.isEmpty()) {
+            // Get GeoJSON features
+            JsonNode features =
+                    root.path("features");
+
+            // Check results
+            if (!features.isArray()
+                    || features.isEmpty()) {
 
                 throw new RuntimeException(
-                        "Could not find location \"" + place + "\""
+                        "Could not find location: "
+                                + place
                 );
             }
 
-            JsonNode first = results.get(0);
+            // Get first result
+            JsonNode firstFeature =
+                    features.get(0);
 
-            double lat = first.path("lat").asDouble();
-            double lon = first.path("lon").asDouble();
+            // Get geometry
+            JsonNode geometry =
+                    firstFeature.path(
+                            "geometry"
+                    );
 
-            return new double[]{lat, lon};
+            // Get coordinates
+            JsonNode coordinates =
+                    geometry.path(
+                            "coordinates"
+                    );
+
+            // Validate coordinates
+            if (!coordinates.isArray()
+                    || coordinates.size() < 2) {
+
+                throw new RuntimeException(
+                        "Photon did not return valid coordinates for: "
+                                + place
+                );
+            }
+
+            /*
+             * Photon / GeoJSON format:
+             *
+             * coordinates[0] = longitude
+             * coordinates[1] = latitude
+             */
+
+            double longitude =
+                    coordinates
+                            .get(0)
+                            .asDouble();
+
+            double latitude =
+                    coordinates
+                            .get(1)
+                            .asDouble();
+
+            System.out.println(
+                    "Location found: "
+                            + place
+                            + " -> Latitude: "
+                            + latitude
+                            + ", Longitude: "
+                            + longitude
+            );
+
+            /*
+             * Return:
+             *
+             * [latitude, longitude]
+             */
+            return new double[]{
+                    latitude,
+                    longitude
+            };
+
+        } catch (InterruptedException e) {
+
+            // Restore interrupted state
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(
+                    "Photon location lookup was interrupted for: "
+                            + place
+            );
 
         } catch (RuntimeException e) {
 
+            // Keep original error
             throw e;
 
         } catch (Exception e) {
 
             throw new RuntimeException(
-                    "Failed to look up location \""
+                    "Failed to look up location '"
                             + place
-                            + "\": "
+                            + "' using Photon: "
                             + e.getMessage()
             );
         }
     }
 
-    // ─────────────────────────────────────────────
-    // Step 2: Coordinates -> Driving Distance
-    // ─────────────────────────────────────────────
+
+    // ============================================================
+    // STEP 2: ROUTING USING OSRM
+    // ============================================================
+
+    /**
+     * Calculates driving distance between
+     * two coordinate pairs.
+     *
+     * OSRM requires:
+     *
+     * longitude,latitude
+     */
     private double route(
             double[] originCoords,
-            double[] destCoords,
+            double[] destinationCoords,
             String origin,
             String destination) {
 
-        // OSRM requires longitude,latitude
-        String coords =
-                originCoords[1] + "," + originCoords[0]
-                        + ";"
-                        + destCoords[1] + "," + destCoords[0];
+        /*
+         * originCoords:
+         *
+         * [latitude, longitude]
+         *
+         * destinationCoords:
+         *
+         * [latitude, longitude]
+         *
+         * OSRM requires:
+         *
+         * longitude,latitude
+         */
 
+        String coordinates =
+                originCoords[1]
+                        + ","
+                        + originCoords[0]
+                        + ";"
+                        + destinationCoords[1]
+                        + ","
+                        + destinationCoords[0];
+
+        // Build OSRM URL
         String url =
                 OSRM_BASE
-                        + coords
+                        + coordinates
                         + "?overview=false";
 
         try {
 
+            System.out.println(
+                    "OSRM request: " + url
+            );
+
+            // Create HTTP request
             HttpRequest request =
                     HttpRequest.newBuilder()
                             .uri(URI.create(url))
-                            .header("User-Agent", userAgent)
-                            .header("Accept", "application/json")
+                            .header(
+                                    "Accept",
+                                    "application/json"
+                            )
                             .GET()
                             .build();
 
+            // Send HTTP request
             HttpResponse<String> response =
                     httpClient.send(
                             request,
                             HttpResponse.BodyHandlers.ofString()
                     );
 
+            System.out.println(
+                    "OSRM HTTP Status: "
+                            + response.statusCode()
+            );
+
+            // Check HTTP status
             if (response.statusCode() != 200) {
 
                 throw new RuntimeException(
-                        "Routing service returned HTTP "
+                        "OSRM routing service returned HTTP "
                                 + response.statusCode()
                                 + ": "
                                 + response.body()
                 );
             }
 
+            // Parse JSON response
             JsonNode root =
-                    mapper.readTree(response.body());
+                    mapper.readTree(
+                            response.body()
+                    );
 
+            // Get OSRM status
             String code =
-                    root.path("code").asText();
+                    root.path("code")
+                            .asText();
 
+            // Check route status
             if (!"Ok".equals(code)) {
 
                 throw new RuntimeException(
-                        "Could not find a route from \""
+                        "Could not find a driving route from '"
                                 + origin
-                                + "\" to \""
+                                + "' to '"
                                 + destination
-                                + "\" ("
+                                + "'. OSRM status: "
                                 + code
-                                + ")"
                 );
             }
 
+            // Get routes
             JsonNode routes =
                     root.path("routes");
 
+            // Check routes
             if (!routes.isArray()
                     || routes.isEmpty()) {
 
                 throw new RuntimeException(
-                        "OSRM returned no route for \""
+                        "OSRM returned no route from '"
                                 + origin
-                                + "\" to \""
+                                + "' to '"
                                 + destination
-                                + "\""
+                                + "'"
                 );
             }
 
+            // Get first/best route
+            JsonNode firstRoute =
+                    routes.get(0);
+
+            // Distance returned by OSRM is in meters
             double meters =
-                    routes.get(0)
+                    firstRoute
                             .path("distance")
                             .asDouble();
 
             // Convert meters to kilometers
+            double kilometers =
+                    meters / 1000.0;
+
             // Round to 2 decimal places
-            return Math.round(
-                    (meters / 1000.0) * 100.0
-            ) / 100.0;
+            double roundedKm =
+                    Math.round(
+                            kilometers * 100.0
+                    ) / 100.0;
+
+            System.out.println(
+                    "Driving distance: "
+                            + roundedKm
+                            + " km"
+            );
+
+            return roundedKm;
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(
+                    "OSRM routing request was interrupted"
+            );
 
         } catch (RuntimeException e) {
 
@@ -247,16 +478,25 @@ public class DistanceService {
         } catch (Exception e) {
 
             throw new RuntimeException(
-                    "Failed to reach routing service: "
+                    "Failed to calculate driving distance from '"
+                            + origin
+                            + "' to '"
+                            + destination
+                            + "': "
                             + e.getMessage()
             );
         }
     }
 
-    private String encode(String s) {
+
+    // ============================================================
+    // URL ENCODING
+    // ============================================================
+
+    private String encode(String value) {
 
         return URLEncoder.encode(
-                s,
+                value,
                 StandardCharsets.UTF_8
         );
     }
