@@ -87,7 +87,7 @@ public class PaymentService {
 
     // ─────────────────────────────────────────────────────────
     // 1. INITIATE — passenger clicks "Pay Now"
-    //    Calculates fare, splits 50/50, builds UPI link, saves to DB
+    //    Calculates fare, splits per app.split.* config, builds UPI link, saves to DB
     // ─────────────────────────────────────────────────────────
     public Payment initiatePayment(PaymentRequest req) {
 
@@ -96,6 +96,18 @@ public class PaymentService {
 
         Traveller traveller = travellerRepository.findById(req.getTravellerId())
                 .orElseThrow(() -> new RuntimeException("Traveller not found"));
+
+        // Guard against duplicate payments: both the passenger-initiated flow
+        // (PayNow) and the traveller-initiated flow (mark ride complete) call
+        // this same method, and either one can be triggered more than once
+        // (double-tap, page refresh, etc). If a PENDING payment already
+        // exists for this exact passenger + traveller pair, return it as-is
+        // instead of creating a second one.
+        List<Payment> existingPending = paymentRepository
+                .findByPassengerIdAndTravellerIdAndStatus(passenger.getId(), traveller.getId(), "PENDING");
+        if (!existingPending.isEmpty()) {
+            return existingPending.get(0);
+        }
 
         // Distance = passenger's own pickup → drop, not the traveller's whole
         // route (a passenger only pays for the leg they actually ride).

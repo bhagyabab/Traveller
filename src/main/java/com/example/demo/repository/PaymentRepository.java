@@ -20,4 +20,5 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     // payout status (PENDING/SETTLED) — used by the monthly payout settlement
     List<Payment> findByTravellerIdAndStatusAndPayoutStatus(
         Long travellerId, String status, String payoutStatus);
+    List<Payment> findByPassengerIdAndTravellerIdAndStatus(Long passengerId, Long travellerId, String status);
 }
