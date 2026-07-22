@@ -21,6 +21,40 @@ public class PaymentController {
     @Autowired private PaymentService paymentService;
     @Autowired private WhatsAppService whatsAppService;
 
+    // ── 0. Fare estimate (no DB write) ────────────────────────
+    // GET /api/payment/estimate?distanceKm=8&seats=2
+    // Returns: { "distanceKm":8, "seats":2, "totalAmount": 42.0 }
+    // Frontend calls this to show "this distance = this much"
+    // before the passenger commits to paying.
+    @GetMapping("/estimate")
+    public ResponseEntity<Map<String, Object>> estimate(
+            @RequestParam("distanceKm") double distanceKm,
+            @RequestParam(value = "seats", defaultValue = "1") int seats) {
+        double total = paymentService.estimateFare(distanceKm, seats);
+        return ResponseEntity.ok(Map.of(
+                "distanceKm", distanceKm,
+                "seats", seats,
+                "totalAmount", total
+        ));
+    }
+
+    // ── 0b. Fare estimate FROM PLACE NAMES (no DB write) ──────
+    // GET /api/payment/estimate/by-location?origin=Ellamanchili&destination=Anakapalle&seats=2
+    // Resolves distance via Google Distance Matrix, then applies the
+    // same slab fare as /initiate would. Use this to show the fare
+    // before the passenger books, using their saved pickup/drop.
+    @GetMapping("/estimate/by-location")
+    public ResponseEntity<?> estimateByLocation(
+            @RequestParam("origin") String origin,
+            @RequestParam("destination") String destination,
+            @RequestParam(value = "seats", defaultValue = "1") int seats) {
+        try {
+            return ResponseEntity.ok(paymentService.estimateFareByLocation(origin, destination, seats));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     // ── 1. Initiate payment ───────────────────────────────────
     // POST /api/payment/initiate
     // Body: { "passengerId":1, "travellerId":2, "distanceKm":210, "seats":1 }
@@ -81,6 +115,34 @@ public class PaymentController {
             @PathVariable("travellerId") Long travellerId) {
         double total = paymentService.getTotalEarnings(travellerId);
         return ResponseEntity.ok(Map.of("totalEarnings", total));
+    }
+
+    // ── 6b. Pending payout (owed, not yet paid out by you) ───
+    // GET /api/payment/traveller/{travellerId}/payouts/pending
+    @GetMapping("/traveller/{travellerId}/payouts/pending")
+    public ResponseEntity<List<Payment>> pendingPayouts(
+            @PathVariable("travellerId") Long travellerId) {
+        return ResponseEntity.ok(paymentService.getPendingPayouts(travellerId));
+    }
+
+    // ── 6c. Settled payout history ────────────────────────────
+    // GET /api/payment/traveller/{travellerId}/payouts/settled
+    @GetMapping("/traveller/{travellerId}/payouts/settled")
+    public ResponseEntity<List<Payment>> settledPayouts(
+            @PathVariable("travellerId") Long travellerId) {
+        return ResponseEntity.ok(paymentService.getSettledPayouts(travellerId));
+    }
+
+    // ── 6d. Settle a traveller's payout (ADMIN ACTION) ────────
+    // POST /api/payment/traveller/{travellerId}/settle
+    // Call this yourself once you've transferred the 70% share,
+    // e.g. once a month. Marks all pending rides as SETTLED.
+    // ⚠️ TODO: lock this down to admin-only before going live —
+    // right now anyone who knows the URL could call it.
+    @PostMapping("/traveller/{travellerId}/settle")
+    public ResponseEntity<?> settlePayouts(
+            @PathVariable("travellerId") Long travellerId) {
+        return ResponseEntity.ok(paymentService.settleTravellerPayouts(travellerId));
     }
 
     // ── 7. WhatsApp message link ──────────────────────────────

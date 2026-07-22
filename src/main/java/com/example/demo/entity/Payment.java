@@ -56,6 +56,15 @@ public class Payment {
     @Column(name = "status", nullable = false)
     private String status = "PENDING"; // PENDING, PAID, FAILED
 
+    // Tracks whether YOU have paid the traveller their 70% share yet.
+    // Only meaningful once status = PAID. PENDING = owed but not yet paid out,
+    // SETTLED = you've transferred the traveller's share (e.g. monthly).
+    @Column(name = "payout_status", nullable = false)
+    private String payoutStatus = "PENDING";
+
+    @Column(name = "payout_at")
+    private LocalDateTime payoutAt;
+
     @Column(name = "upi_link", length = 600)
     private String upiLink;
 
@@ -127,4 +136,10 @@ public class Payment {
 
     public LocalDateTime getPaidAt() { return paidAt; }
     public void setPaidAt(LocalDateTime paidAt) { this.paidAt = paidAt; }
+
+    public String getPayoutStatus() { return payoutStatus; }
+    public void setPayoutStatus(String payoutStatus) { this.payoutStatus = payoutStatus; }
+
+    public LocalDateTime getPayoutAt() { return payoutAt; }
+    public void setPayoutAt(LocalDateTime payoutAt) { this.payoutAt = payoutAt; }
 }
